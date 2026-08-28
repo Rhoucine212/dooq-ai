@@ -1,17 +1,23 @@
 import 'dotenv/config';
 import express from 'express';
 import { onboarding, nextMissingPreference } from './onboarding/darija.mjs';
+import { extractIncomingMessages } from './whatsapp/meta.mjs';
+import { handleIncomingMessage } from './whatsapp/handler.mjs';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'dooq-ai',
-    version: '0.1.0',
+    version: '0.2.0',
     darijaOnboarding: true,
-    matchingEngine: true
+    matchingEngine: true,
+    whatsappWebhook: true,
+    aiTasteParser: true,
+    audioTranscription: true,
+    postgresTasteProfile: true
   });
 });
 
@@ -28,9 +34,19 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', (req, res) => {
-  // MVP base: acknowledge Meta quickly. Message parsing/persistence is added next.
-  console.log('WhatsApp webhook event', JSON.stringify(req.body));
+  // Meta expects a fast 200. Processing happens after acknowledgement.
   res.sendStatus(200);
+
+  const messages = extractIncomingMessages(req.body);
+  for (const message of messages) {
+    handleIncomingMessage(message).catch((error) => {
+      console.error('Failed to process WhatsApp message', {
+        messageId: message.id,
+        from: message.from,
+        error: error?.message || String(error)
+      });
+    });
+  }
 });
 
 app.get('/api/onboarding/:step?', (req, res) => {
