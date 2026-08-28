@@ -11,7 +11,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'dooq-ai',
-    version: '0.2.0',
+    version: '0.2.1',
     darijaOnboarding: true,
     matchingEngine: true,
     whatsappWebhook: true,
@@ -49,11 +49,18 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-app.get('/api/onboarding/:step?', (req, res) => {
-  const step = req.params.step || 'welcome';
+function sendOnboardingStep(step, res) {
   const payload = onboarding[step];
   if (!payload) return res.status(404).json({ error: 'unknown_step' });
-  res.json(payload);
+  return res.json(payload);
+}
+
+app.get('/api/onboarding', (_req, res) => {
+  return sendOnboardingStep('welcome', res);
+});
+
+app.get('/api/onboarding/:step', (req, res) => {
+  return sendOnboardingStep(req.params.step, res);
 });
 
 app.post('/api/onboarding/next', (req, res) => {
