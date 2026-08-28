@@ -3,6 +3,18 @@ import express from 'express';
 import { onboarding, nextMissingPreference } from './onboarding/darija.mjs';
 import { extractIncomingMessages } from './whatsapp/meta.mjs';
 import { handleIncomingMessage } from './whatsapp/handler.mjs';
+import { ensureDatabaseSchema } from './init-db.mjs';
+
+let databaseReady = false;
+let databaseConfigured = Boolean(process.env.DATABASE_URL);
+
+try {
+  const databaseState = await ensureDatabaseSchema();
+  databaseConfigured = databaseState.configured;
+  databaseReady = databaseState.initialized;
+} catch (error) {
+  console.error('Dooq AI database initialization failed', error?.message || String(error));
+}
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -11,13 +23,16 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'dooq-ai',
-    version: '0.2.1',
+    version: '0.2.2',
     darijaOnboarding: true,
     matchingEngine: true,
     whatsappWebhook: true,
     aiTasteParser: true,
     audioTranscription: true,
-    postgresTasteProfile: true
+    postgresTasteProfile: true,
+    databaseConfigured,
+    databaseReady,
+    automaticDatabaseInit: true
   });
 });
 
