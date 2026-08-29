@@ -29,7 +29,8 @@ export const allergySafetyMessage = 'تسجلات. غادي ناخدها بعي�
 
 export const completionMessage = 'صافي، وليت عارف ذوقك مزيان. دابا نقدر نقترح عليك أكلات ومطاعم اللي كيناسبوك أكثر حسب الذوق، الميزانية، الجو، والمكان.';
 
-export const onboardingOrder = ['food','flavor','dislikes','allergies','budget','atmosphere'];
+// Allergy remains supported when the user mentions it naturally, but it is no longer a mandatory onboarding question.
+export const onboardingOrder = ['food','flavor','dislikes','budget','atmosphere'];
 
 export function nextMissingPreference(missing = []) {
   return onboardingOrder.find((key) => missing.includes(key)) ?? null;
