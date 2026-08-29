@@ -55,6 +55,28 @@ export async function getConversationState(userId) {
   return rows[0] || null;
 }
 
+export async function resetPreferenceSurvey(userId, rawMessage = null) {
+  const db = requirePool();
+  await db.query(
+    `UPDATE taste_profiles SET
+      favorite_foods='{}', favorite_flavors='{}', disliked_foods='{}',
+      budget_min=NULL, budget_max=NULL, preferred_atmosphere='{}',
+      preferred_cuisines='{}', preferred_textures='{}', preferred_occasions='{}',
+      preferred_service_modes='{}', service_priorities='{}', portion_preferences='{}',
+      spicy_preference=NULL, health_priority=NULL, confidence_score=0, updated_at=NOW()
+     WHERE user_id=$1`,
+    [userId]
+  );
+  const missing = ['food', 'flavor', 'dislikes', 'budget', 'atmosphere'];
+  await db.query(
+    `UPDATE conversation_state
+     SET missing_preferences=$2, current_step='food', last_message=$3, updated_at=NOW()
+     WHERE user_id=$1`,
+    [userId, missing, rawMessage]
+  );
+  return { missing_preferences: missing, current_step: 'food' };
+}
+
 export async function applyTasteUpdate(userId, patch, rawMessage = null) {
   const profile = await getTasteProfile(userId);
   const state = await getConversationState(userId);
@@ -120,7 +142,7 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
   if (merged.budget_min != null || merged.budget_max != null || patch.budget_answered) captured.add('budget');
   if (merged.preferred_atmosphere.length || patch.atmosphere_answered) captured.add('atmosphere');
 
-  const missing = (state.missing_preferences || []).filter((item) => !captured.has(item));
+  const missing = (state.missing_preferences || []).filter((item) => !captured.has(item) && item !== 'allergies');
   await requirePool().query(
     `UPDATE conversation_state
      SET missing_preferences=$2, current_step=$3, last_message=$4, updated_at=NOW()
