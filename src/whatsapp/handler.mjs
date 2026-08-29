@@ -51,6 +51,17 @@ const genericRestaurantIntents = new Set([
   'بغيت ناكل', 'اريد ان اكل', 'أريد أن آكل', 'شنو ناكل', 'فين ناكل', 'فين نمشي ناكل'
 ]);
 
+const bestFollowUpPatterns = [
+  'اختار احسن واحد', 'اختار أحسن واحد', 'اختار لي احسن واحد', 'اختار لي أحسن واحد',
+  'شنو الاحسن', 'شنو الأحسن', 'شنو افضل واحد', 'شنو أفضل واحد',
+  'best one', 'choose the best', 'meilleur', 'le meilleur'
+];
+
+const mapFollowUpPatterns = [
+  'الموقع', 'المكان', 'الخريطة', 'لوكيشن', 'location', 'map', 'google maps',
+  'فين كاين', 'فين هو', 'ارسل الموقع', 'أرسل الموقع', 'صيفط الموقع', 'بغيت نمشي ليه', 'باش نمشي ليه'
+];
+
 function normalizeText(text = '') {
   return String(text)
     .trim()
@@ -67,6 +78,13 @@ function isGenericRestaurantIntent(text = '') {
 
 function includesPhrase(text, phrase) {
   return text === phrase || text.includes(phrase);
+}
+
+function isRecommendationFollowUp(text = '') {
+  const normalized = normalizeText(text);
+  const asksBest = bestFollowUpPatterns.some((p) => includesPhrase(normalized, normalizeText(p)));
+  const asksMap = mapFollowUpPatterns.some((p) => includesPhrase(normalized, normalizeText(p)));
+  return asksBest || asksMap;
 }
 
 function applyDeterministicStepReply(patch, text, currentStep) {
@@ -128,6 +146,11 @@ export async function handleIncomingMessage(message) {
 
   let state = await getConversationState(user.id);
 
+  if (isRecommendationFollowUp(text) && (!state?.missing_preferences?.length || state?.current_step === 'complete')) {
+    await sendBestRecommendationFollowUp(message.from, user.id, text);
+    return;
+  }
+
   if (isGenericRestaurantIntent(text) && (!state?.missing_preferences?.length || state?.current_step === 'complete')) {
     await resetPreferenceSurvey(user.id, text);
     const block = onboarding.welcome;
@@ -163,6 +186,50 @@ export async function handleIncomingMessage(message) {
     ? `\n\n${block.options.map((item) => `• ${item}`).join('\n')}`
     : '';
   await sendText(message.from, `${block.text}${options}`);
+}
+
+async function rankedRecommendations(userId) {
+  const profile = await getTasteProfile(userId);
+  const rows = await listCandidateDishes();
+  const items = rows.map((row) => ({
+    dish: row,
+    restaurant: {
+      active: row.active,
+      cuisine_types: row.cuisine_types || [],
+      atmosphere_tags: row.atmosphere_tags || [],
+      service_modes: row.service_modes || [],
+      service_tags: row.service_tags || [],
+      rating: row.rating,
+      review_count: row.review_count,
+      map_url: row.map_url,
+      name: row.restaurant_name
+    }
+  }));
+  return rankDishes(items, { profile, distanceKm: null, feedbackSignal: 0 });
+}
+
+async function sendBestRecommendationFollowUp(to, userId, text) {
+  const ranked = await rankedRecommendations(userId);
+  if (!ranked.length) {
+    await sendText(to, 'ما لقيتش دابا اقتراح موثّق نقدر نختارو ليك بثقة.');
+    return;
+  }
+
+  const best = ranked[0];
+  const { dish, restaurant, match } = best;
+  const wantsMap = mapFollowUpPatterns.some((p) => includesPhrase(normalizeText(text), normalizeText(p)));
+  const price = dish.price != null ? `${Number(dish.price).toFixed(0)} درهم` : 'الثمن غير متأكد';
+  const lines = [
+    `أنا نختار ليك هادا: ${dish.name} من ${restaurant.name}.`,
+    `${match.score}% مناسب لذوقك`,
+    `💰 ${price}`,
+    restaurant.rating != null ? `⭐ ${restaurant.rating}` : null,
+    wantsMap
+      ? (restaurant.map_url ? `📍 الموقع: ${restaurant.map_url}` : '📍 ما عنديش رابط خريطة موثّق لهاد المطعم دابا.')
+      : (restaurant.map_url ? `إلى بغيتي نمشيك ليه، نقدر نصيفط لك الموقع مباشرة: ${restaurant.map_url}` : null)
+  ].filter(Boolean);
+
+  await sendText(to, lines.join('\n'));
 }
 
 async function sendRecommendationsOrCompletion(to, userId) {
