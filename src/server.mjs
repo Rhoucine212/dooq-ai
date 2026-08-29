@@ -7,11 +7,13 @@ import { ensureDatabaseSchema } from './init-db.mjs';
 
 let databaseReady = false;
 let databaseConfigured = Boolean(process.env.DATABASE_URL);
+let casablancaSeed = null;
 
 try {
   const databaseState = await ensureDatabaseSchema();
   databaseConfigured = databaseState.configured;
   databaseReady = databaseState.initialized;
+  casablancaSeed = databaseState.seed || null;
 } catch (error) {
   console.error('Dooq AI database initialization failed', error?.message || String(error));
 }
@@ -23,7 +25,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'dooq-ai',
-    version: '0.2.2',
+    version: '0.2.3',
     darijaOnboarding: true,
     matchingEngine: true,
     whatsappWebhook: true,
@@ -32,7 +34,8 @@ app.get('/health', (_req, res) => {
     postgresTasteProfile: true,
     databaseConfigured,
     databaseReady,
-    automaticDatabaseInit: true
+    automaticDatabaseInit: true,
+    casablancaRestaurantSeed: casablancaSeed
   });
 });
 
@@ -49,7 +52,6 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', (req, res) => {
-  // Meta expects a fast 200. Processing happens after acknowledgement.
   res.sendStatus(200);
 
   const messages = extractIncomingMessages(req.body);
