@@ -24,6 +24,15 @@ CREATE TABLE IF NOT EXISTS taste_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS preferred_cuisines TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS preferred_textures TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS preferred_occasions TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS preferred_service_modes TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS service_priorities TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS portion_preferences TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS spicy_preference TEXT;
+ALTER TABLE taste_profiles ADD COLUMN IF NOT EXISTS health_priority SMALLINT CHECK (health_priority BETWEEN 0 AND 5);
+
 CREATE TABLE IF NOT EXISTS restaurants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -41,6 +50,12 @@ CREATE TABLE IF NOT EXISTS restaurants (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS cover_photo_url TEXT;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS service_modes TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS service_tags TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS price_level SMALLINT CHECK (price_level BETWEEN 1 AND 4);
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS review_count INTEGER;
 
 CREATE TABLE IF NOT EXISTS dishes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -61,6 +76,13 @@ CREATE TABLE IF NOT EXISTS dishes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS texture_tags TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS portion_size TEXT;
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS calories INTEGER;
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS protein_grams NUMERIC(8,2);
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS image_confidence TEXT NOT NULL DEFAULT 'unknown' CHECK (image_confidence IN ('verified','partial','unknown'));
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS source_url TEXT;
 
 CREATE TABLE IF NOT EXISTS recommendations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
