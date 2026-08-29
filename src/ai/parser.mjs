@@ -1,3 +1,5 @@
+import { referenceSummary } from '../reference/food-taxonomy.mjs';
+
 const OPENAI_BASE = 'https://api.openai.com/v1';
 
 function requireApiKey() {
@@ -22,11 +24,21 @@ export async function parseTasteMessage(text, context = {}) {
       messages: [
         {
           role: 'system',
-          content: `You extract food preferences from Moroccan Darija, Arabic, French, English, or Italian. Return JSON only with these fields: favorite_foods, favorite_flavors, disliked_foods, allergies, dietary_restrictions, budget_min, budget_max, preferred_atmosphere, max_distance_km, confidence_score, dislikes_answered, allergies_answered, budget_answered, atmosphere_answered, flavor_answered, food_answered.
-Arrays must contain normalized short lowercase tags in English where practical. Numeric money is MAD. If a field is unknown use [] or null. Never infer allergies.
-Understand free-form intent across the whole message. Examples: \"عشاء رومانسي\", \"dîner romantique\", \"romantic dinner\" => preferred_atmosphere includes \"romantic\" and atmosphere_answered=true even if no food is specified.
-When the user explicitly says they have no preference/details for the topic being asked (for example: \"ما عنديش تفاصيل\", \"ما عنديش تفضيل\", \"أي حاجة\", \"مش مهم\", \"whatever\", \"no preference\"), mark that current topic as answered instead of leaving it missing. Current topic: ${currentStep || 'unknown'}.
-If current topic is flavor, set flavor_answered=true for such a no-preference answer. If current topic is food, set food_answered=true. For dislikes/allergies/budget/atmosphere, use the existing *_answered fields. If the user says the question is repeated, do not invent a preference; treat the current topic as answered with no preference so the flow can advance.`
+          content: `You are Dooq AI's food-preference parser. Extract preferences from Moroccan Darija, Arabic, French, English, or Italian and return JSON only.
+
+Canonical reference: ${referenceSummary()}
+
+Return these fields exactly: favorite_foods, favorite_flavors, disliked_foods, allergies, dietary_restrictions, budget_min, budget_max, preferred_atmosphere, max_distance_km, confidence_score, preferred_cuisines, preferred_textures, preferred_occasions, preferred_service_modes, service_priorities, portion_preferences, spicy_preference, health_priority, dislikes_answered, allergies_answered, budget_answered, atmosphere_answered, flavor_answered, food_answered.
+
+Rules:
+- Arrays contain normalized short English tags from the canonical reference whenever possible.
+- Numeric money is MAD. Distance is km. health_priority is 0-5.
+- Never infer allergies. Allergies are a safety constraint, not a recommendation score.
+- Understand the whole free-form message. Example: "عشاء رومانسي" => preferred_occasions includes dinner and date_night, preferred_atmosphere includes romantic, atmosphere_answered=true.
+- If the user explicitly says no preference/details for the current topic (e.g. ما عنديش تفاصيل، ما عنديش تفضيل، أي حاجة، مش مهم, whatever, no preference), mark that current topic answered instead of leaving it missing. Current topic: ${currentStep || 'unknown'}.
+- If current topic is flavor set flavor_answered=true for a no-preference reply. If food set food_answered=true. For dislikes/allergies/budget/atmosphere use the corresponding *_answered field.
+- If the user says the question is repeated, do not invent a preference; mark the current topic answered and advance.
+- Capture occasion, cuisine, texture, portion, service mode, health priority, spicy preference, distance and atmosphere opportunistically even when they were not explicitly asked.`
         },
         { role: 'user', content: text }
       ]
@@ -58,6 +70,7 @@ export async function transcribeAudio(audioBuffer, mimeType = 'audio/ogg', filen
 function sanitizePatch(input = {}) {
   const arr = (v) => Array.isArray(v) ? v.filter(Boolean).map((x) => String(x).trim().toLowerCase()) : [];
   const num = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
+  const text = (v) => v == null || v === '' ? null : String(v).trim().toLowerCase();
   return {
     favorite_foods: arr(input.favorite_foods),
     favorite_flavors: arr(input.favorite_flavors),
@@ -69,6 +82,14 @@ function sanitizePatch(input = {}) {
     preferred_atmosphere: arr(input.preferred_atmosphere),
     max_distance_km: num(input.max_distance_km),
     confidence_score: Math.max(0, Math.min(100, num(input.confidence_score) ?? 60)),
+    preferred_cuisines: arr(input.preferred_cuisines),
+    preferred_textures: arr(input.preferred_textures),
+    preferred_occasions: arr(input.preferred_occasions),
+    preferred_service_modes: arr(input.preferred_service_modes),
+    service_priorities: arr(input.service_priorities),
+    portion_preferences: arr(input.portion_preferences),
+    spicy_preference: text(input.spicy_preference),
+    health_priority: num(input.health_priority) == null ? null : Math.max(0, Math.min(5, Math.round(num(input.health_priority)))),
     dislikes_answered: Boolean(input.dislikes_answered),
     allergies_answered: Boolean(input.allergies_answered),
     budget_answered: Boolean(input.budget_answered),
