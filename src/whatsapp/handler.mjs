@@ -1,7 +1,8 @@
 import { parseTasteMessage, transcribeAudio } from '../ai/parser.mjs';
-import { applyTasteUpdate, getConversationState, getOrCreateUser } from '../db.mjs';
+import { applyTasteUpdate, getConversationState, getOrCreateUser, getTasteProfile, listCandidateDishes } from '../db.mjs';
+import { rankDishes } from '../matching/engine.mjs';
 import { onboarding, completionMessage, allergySafetyMessage } from '../onboarding/darija.mjs';
-import { downloadMedia, sendText } from './meta.mjs';
+import { downloadMedia, sendImage, sendText } from './meta.mjs';
 
 const stepMap = {
   food: 'welcome',
@@ -23,25 +24,25 @@ const stepValueMaps = {
     [['حار', 'spicy', 'hot'], 'spicy'],
     [['كريمي', 'creamy'], 'creamy'],
     [['خفيف', 'light'], 'light'],
-    [['منعش', 'fresh', 'refreshing'], 'refreshing'],
-    [['حلو ومالح', 'sweet and salty', 'sweet salty'], 'sweet-salty']
+    [['منعش', 'fresh', 'refreshing'], 'fresh'],
+    [['حلو ومالح', 'sweet and salty', 'sweet salty'], 'sweet_savory']
   ],
   food: [
-    [['لحم', 'meat', 'beef'], 'meat'],
+    [['لحم', 'meat', 'beef'], 'beef'],
     [['دجاج', 'chicken'], 'chicken'],
     [['باستا', 'pasta'], 'pasta'],
     [['بيتزا', 'pizza'], 'pizza'],
     [['حوت', 'سمك', 'fish'], 'fish'],
-    [['خفيفة وصحية', 'صحية', 'healthy'], 'healthy-light']
+    [['خفيفة وصحية', 'صحية', 'healthy'], 'healthy']
   ],
   atmosphere: [
     [['عائلي', 'family'], 'family'],
     [['رومانسي', 'romantic'], 'romantic'],
     [['هادئ', 'quiet', 'calm'], 'quiet'],
     [['فيه شوية ديال الجو', 'جو', 'lively'], 'lively'],
-    [['سريع', 'quick', 'fast'], 'quick'],
-    [['منظر زوين', 'view', 'scenic'], 'scenic'],
-    [['الأكل يكون ممتاز', 'الاكل يكون ممتاز', 'food first'], 'food-first']
+    [['سريع', 'quick', 'fast'], 'fast'],
+    [['منظر زوين', 'view', 'scenic'], 'view'],
+    [['الأكل يكون ممتاز', 'الاكل يكون ممتاز', 'food first'], 'food_first']
   ]
 };
 
@@ -130,7 +131,7 @@ export async function handleIncomingMessage(message) {
   }
 
   if (!result.missing_preferences.length) {
-    await sendText(message.from, completionMessage);
+    await sendRecommendationsOrCompletion(message.from, user.id);
     return;
   }
 
@@ -142,4 +143,60 @@ export async function handleIncomingMessage(message) {
     ? `\n\n${block.options.map((item) => `• ${item}`).join('\n')}`
     : '';
   await sendText(message.from, `${block.text}${options}`);
+}
+
+async function sendRecommendationsOrCompletion(to, userId) {
+  const profile = await getTasteProfile(userId);
+  const rows = await listCandidateDishes();
+
+  if (!rows.length) {
+    await sendText(to, `${completionMessage}\n\nالبروفايل ديالك واجد. ملي ندخلو بيانات المطاعم والأطباق الموثقة، غادي نوريك أحسن 3 اقتراحات بالثمن والصورة الحقيقية.`);
+    return;
+  }
+
+  const items = rows.map((row) => ({
+    dish: row,
+    restaurant: {
+      active: row.active,
+      cuisine_types: row.cuisine_types || [],
+      atmosphere_tags: row.atmosphere_tags || [],
+      service_modes: row.service_modes || [],
+      service_tags: row.service_tags || [],
+      rating: row.rating,
+      review_count: row.review_count,
+      map_url: row.map_url,
+      name: row.restaurant_name
+    }
+  }));
+
+  const ranked = rankDishes(items, { profile, distanceKm: null, feedbackSignal: 0 });
+  if (!ranked.length) {
+    await sendText(to, 'لقيت المعلومات ديالك ولكن ما لقيتش دابا طبق موثّق كيدوز شروطك، خصوصاً الحساسية والتفضيلات. غادي نفضّل ما نخمنش عليك.');
+    return;
+  }
+
+  await sendText(to, 'ها أحسن الاقتراحات اللي لقيت ليك دابا. كنوري غير الصور المرتبطة فعلاً بنفس الطبق والمطعم:');
+
+  for (const item of ranked) {
+    const { dish, restaurant, match } = item;
+    const price = dish.price != null ? `${Number(dish.price).toFixed(0)} درهم` : 'الثمن غير متأكد';
+    const rating = restaurant.rating != null ? `⭐ ${restaurant.rating}` : null;
+    const caption = [
+      `${match.score}% مناسب لذوقك`,
+      `🍽️ ${dish.name}`,
+      `📍 ${restaurant.name}`,
+      `💰 ${price}`,
+      rating,
+      dish.description ? `📝 ${dish.description}` : null,
+      dish.data_confidence !== 'verified' ? 'ℹ️ بعض معلومات هاد الطبق خاصها تأكيد إضافي.' : null,
+      restaurant.map_url ? `الخريطة: ${restaurant.map_url}` : null
+    ].filter(Boolean).join('\n');
+
+    const canShowRealImage = dish.photo_url && dish.image_confidence === 'verified';
+    if (canShowRealImage) {
+      await sendImage(to, dish.photo_url, caption);
+    } else {
+      await sendText(to, `${caption}\n📷 ما غاديش نعرض صورة حتى تكون صورة حقيقية وموثقة ديال نفس الطبق.`);
+    }
+  }
 }
