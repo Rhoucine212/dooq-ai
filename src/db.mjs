@@ -96,8 +96,8 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
   );
 
   const captured = new Set();
-  if (merged.favorite_foods.length) captured.add('food');
-  if (merged.favorite_flavors.length) captured.add('flavor');
+  if (patch.food_answered || merged.favorite_foods.length) captured.add('food');
+  if (patch.flavor_answered || merged.favorite_flavors.length) captured.add('flavor');
   if (patch.dislikes_answered || merged.disliked_foods.length) captured.add('dislikes');
   if (patch.allergies_answered || merged.allergies.length) captured.add('allergies');
   if (merged.budget_min != null || merged.budget_max != null || patch.budget_answered) captured.add('budget');

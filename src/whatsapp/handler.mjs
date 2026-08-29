@@ -1,5 +1,5 @@
 import { parseTasteMessage, transcribeAudio } from '../ai/parser.mjs';
-import { applyTasteUpdate, getOrCreateUser } from '../db.mjs';
+import { applyTasteUpdate, getConversationState, getOrCreateUser } from '../db.mjs';
 import { onboarding, completionMessage, allergySafetyMessage } from '../onboarding/darija.mjs';
 import { downloadMedia, sendText } from './meta.mjs';
 
@@ -26,7 +26,12 @@ export async function handleIncomingMessage(message) {
     return;
   }
 
-  const patch = await parseTasteMessage(text);
+  const state = await getConversationState(user.id);
+  const currentStep = state?.current_step && state.current_step !== 'complete'
+    ? state.current_step
+    : state?.missing_preferences?.[0] || null;
+
+  const patch = await parseTasteMessage(text, { currentStep });
   const result = await applyTasteUpdate(user.id, patch, text);
 
   if (patch.allergies.length) {

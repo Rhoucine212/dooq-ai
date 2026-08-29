@@ -5,9 +5,10 @@ function requireApiKey() {
   return process.env.OPENAI_API_KEY;
 }
 
-export async function parseTasteMessage(text) {
+export async function parseTasteMessage(text, context = {}) {
   if (!text?.trim()) return emptyPatch();
 
+  const currentStep = context.currentStep || null;
   const response = await fetch(`${OPENAI_BASE}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -21,7 +22,11 @@ export async function parseTasteMessage(text) {
       messages: [
         {
           role: 'system',
-          content: `You extract food preferences from Moroccan Darija, Arabic, French, English, or Italian. Return JSON only with these fields: favorite_foods, favorite_flavors, disliked_foods, allergies, dietary_restrictions, budget_min, budget_max, preferred_atmosphere, max_distance_km, confidence_score, dislikes_answered, allergies_answered, budget_answered, atmosphere_answered. Arrays must contain normalized short lowercase tags in English where practical. Numeric money is MAD. If a field is unknown use [] or null. Boolean *_answered fields should be true when the user explicitly answered that topic even with none/no preference. Never infer allergies.`
+          content: `You extract food preferences from Moroccan Darija, Arabic, French, English, or Italian. Return JSON only with these fields: favorite_foods, favorite_flavors, disliked_foods, allergies, dietary_restrictions, budget_min, budget_max, preferred_atmosphere, max_distance_km, confidence_score, dislikes_answered, allergies_answered, budget_answered, atmosphere_answered, flavor_answered, food_answered.
+Arrays must contain normalized short lowercase tags in English where practical. Numeric money is MAD. If a field is unknown use [] or null. Never infer allergies.
+Understand free-form intent across the whole message. Examples: \"عشاء رومانسي\", \"dîner romantique\", \"romantic dinner\" => preferred_atmosphere includes \"romantic\" and atmosphere_answered=true even if no food is specified.
+When the user explicitly says they have no preference/details for the topic being asked (for example: \"ما عنديش تفاصيل\", \"ما عنديش تفضيل\", \"أي حاجة\", \"مش مهم\", \"whatever\", \"no preference\"), mark that current topic as answered instead of leaving it missing. Current topic: ${currentStep || 'unknown'}.
+If current topic is flavor, set flavor_answered=true for such a no-preference answer. If current topic is food, set food_answered=true. For dislikes/allergies/budget/atmosphere, use the existing *_answered fields. If the user says the question is repeated, do not invent a preference; treat the current topic as answered with no preference so the flow can advance.`
         },
         { role: 'user', content: text }
       ]
@@ -67,7 +72,9 @@ function sanitizePatch(input = {}) {
     dislikes_answered: Boolean(input.dislikes_answered),
     allergies_answered: Boolean(input.allergies_answered),
     budget_answered: Boolean(input.budget_answered),
-    atmosphere_answered: Boolean(input.atmosphere_answered)
+    atmosphere_answered: Boolean(input.atmosphere_answered),
+    flavor_answered: Boolean(input.flavor_answered),
+    food_answered: Boolean(input.food_answered)
   };
 }
 
