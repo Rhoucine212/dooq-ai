@@ -1,221 +1,46 @@
 import { parseTasteMessage, transcribeAudio } from '../ai/parser.mjs';
-import { applyTasteUpdate, getConversationState, getOrCreateUser, getTasteProfile, listCandidateDishes, resetPreferenceSurvey } from '../db.mjs';
+import { applyTasteUpdate, beginLocationOnboarding, getConversationState, getOrCreateUser, getTasteProfile, listCandidateDishes, resetPreferenceSurvey, saveUserCity, saveUserLocation, skipUserLocation } from '../db.mjs';
 import { rankDishes } from '../matching/engine.mjs';
 import { onboarding, completionMessage, allergySafetyMessage } from '../onboarding/darija.mjs';
-import { downloadMedia, sendImage, sendText } from './meta.mjs';
+import { downloadMedia, sendButtons, sendImage, sendList, sendText } from './meta.mjs';
 
-const stepMap = {
-  food: 'welcome', flavor: 'flavor', dislikes: 'dislikes', allergies: 'allergies', budget: 'budget', atmosphere: 'atmosphere'
-};
+const stepMap={food:'welcome',flavor:'flavor',dislikes:'dislikes',allergies:'allergies',budget:'budget',atmosphere:'atmosphere'};
+const noPreferencePatterns=['ما عنديش تفضيل','ما عنديش تفضيل معين','ما عنديش تفاصيل','أي حاجة','اي حاجة','مش مهم','ماشي مهم','سؤال مكرر','نفس السؤال','whatever','no preference'];
+const stepValueMaps={flavor:[[['مشوي','grilled','grill'],'grilled'],[['حار','spicy','hot'],'spicy'],[['كريمي','creamy'],'creamy'],[['خفيف','light'],'light'],[['منعش','fresh'],'fresh']],food:[[['لحم','meat','beef'],'beef'],[['دجاج','chicken'],'chicken'],[['باستا','pasta'],'pasta'],[['بيتزا','pizza'],'pizza'],[['حوت','سمك','fish'],'fish'],[['خفيفة وصحية','صحية','healthy'],'healthy']],atmosphere:[[['عائلي','family'],'family'],[['رومانسي','romantic'],'romantic'],[['هادئ','quiet'],'quiet'],[['جو','lively'],'lively'],[['سريع','fast'],'fast'],[['منظر زوين','view'],'view']]};
+const genericRestaurantIntents=new Set(['مطعم','مطاعم','restaurant','restaurants','resto','بغيت ناكل','اريد ان اكل','أريد أن آكل','شنو ناكل','فين ناكل','فين نمشي ناكل']);
+const bestFollowUpPatterns=['اختار احسن واحد','اختار أحسن واحد','شنو الاحسن','شنو الأحسن','best one','choose the best','meilleur'];
+const mapFollowUpPatterns=['الموقع','المكان','الخريطة','لوكيشن','location','map','google maps','فين كاين','ارسل الموقع','أرسل الموقع','صيفط الموقع'];
+const cities=[['city_casablanca','Casablanca'],['city_rabat','Rabat'],['city_marrakech','Marrakech'],['city_tanger','Tanger'],['city_agadir','Agadir'],['city_fes','Fès'],['city_ifrane','Ifrane'],['city_other','مدينة أخرى']];
+function normalizeText(t=''){return String(t).trim().toLowerCase().replace(/[ًٌٍَُِّْـ]/g,'').replace(/[؟?!.,،؛:]+/g,' ').replace(/\s+/g,' ').trim();}
+function includesPhrase(t,p){return t===p||t.includes(p)}
+function isGenericRestaurantIntent(t=''){return genericRestaurantIntents.has(normalizeText(t))}
+function isRecommendationFollowUp(t=''){const n=normalizeText(t);return bestFollowUpPatterns.some(p=>includesPhrase(n,normalizeText(p)))||mapFollowUpPatterns.some(p=>includesPhrase(n,normalizeText(p)))}
+function googleMapsSearchUrl(n,c){return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([n,c].filter(Boolean).join(' '))}`}
+function instagramSearchUrl(n,c){return `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent([n,c].filter(Boolean).join(' '))}`}
+function googleImageSearchUrl(n){return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${n} food dish`)}`}
+function restaurantLinks(r){const c=r.city||'Casablanca';return{map:r.map_url||googleMapsSearchUrl(r.name,c),instagram:instagramSearchUrl(r.name,c)}}
 
-const noPreferencePatterns = [
-  'ما عنديش تفضيل', 'ما عنديش تفضيل معين', 'ما عنديش تفاصيل', 'أي حاجة', 'اي حاجة',
-  'مش مهم', 'ماشي مهم', 'سؤال مكرر', 'نفس السؤال', 'whatever', 'no preference'
-];
+async function askCity(to){await sendList(to,'مرحبا بك فـ Dooq AI 👋\nباش نلقى ليك المطاعم المناسبة والقريبة، فاش من مدينة كاين دابا؟','اختار المدينة',cities.map(([id,title])=>({id,title})));}
+async function askLocation(to){await sendButtons(to,'مزيان. إلا شاركتي الموقع ديالك نقدر نرتب المطاعم حسب القرب الحقيقي.\n\nاضغط على 📎 فـ WhatsApp → Location → Send your current location. من بعد نكمل مباشرة.',[{id:'location_help',title:'📍 شارك موقعي'},{id:'location_skip',title:'بلا موقع'}]);}
+async function askTasteStep(to,next){const block=onboarding[stepMap[next]];if(!block)return;const opts=(block.options||[]).slice(0,10).map((title,i)=>({id:`taste_${next}_${i}`,title})); if(opts.length) await sendList(to,block.text,'اختار الجواب',opts); else await sendText(to,block.text);}
+function applyDeterministicStepReply(patch,text,currentStep){const n=normalizeText(text);if(!n||!currentStep)return patch;const out={...patch,favorite_foods:[...(patch.favorite_foods||[])],favorite_flavors:[...(patch.favorite_flavors||[])],preferred_atmosphere:[...(patch.preferred_atmosphere||[])]};if(noPreferencePatterns.some(p=>includesPhrase(n,normalizeText(p)))){out[`${currentStep}_answered`]=true;return out}for(const [phrases,value] of stepValueMaps[currentStep]||[]){if(!phrases.some(p=>includesPhrase(n,normalizeText(p))))continue;if(currentStep==='food'){out.favorite_foods=[...new Set([...out.favorite_foods,value])];out.food_answered=true}if(currentStep==='flavor'){out.favorite_flavors=[...new Set([...out.favorite_flavors,value])];out.flavor_answered=true}if(currentStep==='atmosphere'){out.preferred_atmosphere=[...new Set([...out.preferred_atmosphere,value])];out.atmosphere_answered=true}break}return out}
 
-const stepValueMaps = {
-  flavor: [
-    [['مشوي', 'grilled', 'grill'], 'grilled'], [['حار', 'spicy', 'hot'], 'spicy'],
-    [['كريمي', 'creamy'], 'creamy'], [['خفيف', 'light'], 'light'],
-    [['منعش', 'fresh', 'refreshing'], 'fresh'], [['حلو ومالح', 'sweet and salty', 'sweet salty'], 'sweet_savory']
-  ],
-  food: [
-    [['لحم', 'meat', 'beef'], 'beef'], [['دجاج', 'chicken'], 'chicken'], [['باستا', 'pasta'], 'pasta'],
-    [['بيتزا', 'pizza'], 'pizza'], [['حوت', 'سمك', 'fish'], 'fish'], [['خفيفة وصحية', 'صحية', 'healthy'], 'healthy']
-  ],
-  atmosphere: [
-    [['عائلي', 'family'], 'family'], [['رومانسي', 'romantic'], 'romantic'], [['هادئ', 'quiet', 'calm'], 'quiet'],
-    [['فيه شوية ديال الجو', 'جو', 'lively'], 'lively'], [['سريع', 'quick', 'fast'], 'fast'],
-    [['منظر زوين', 'view', 'scenic'], 'view'], [['الأكل يكون ممتاز', 'الاكل يكون ممتاز', 'food first'], 'food_first']
-  ]
-};
-
-const genericRestaurantIntents = new Set([
-  'مطعم', 'مطاعم', 'restaurant', 'restaurants', 'resto', 'بغيت ناكل', 'اريد ان اكل', 'أريد أن آكل', 'شنو ناكل', 'فين ناكل', 'فين نمشي ناكل'
-]);
-
-const bestFollowUpPatterns = [
-  'اختار احسن واحد', 'اختار أحسن واحد', 'اختار لي احسن واحد', 'اختار لي أحسن واحد',
-  'شنو الاحسن', 'شنو الأحسن', 'شنو افضل واحد', 'شنو أفضل واحد', 'best one', 'choose the best', 'meilleur', 'le meilleur'
-];
-
-const mapFollowUpPatterns = [
-  'الموقع', 'المكان', 'الخريطة', 'لوكيشن', 'location', 'map', 'google maps', 'فين كاين', 'فين هو',
-  'ارسل الموقع', 'أرسل الموقع', 'صيفط الموقع', 'بغيت نمشي ليه', 'باش نمشي ليه'
-];
-
-function normalizeText(text = '') {
-  return String(text).trim().toLowerCase().replace(/[ًٌٍَُِّْـ]/g, '').replace(/[؟?!.,،؛:]+/g, ' ').replace(/\s+/g, ' ').trim();
+export async function handleIncomingMessage(message){
+ const user=await getOrCreateUser(message.from,message.name); let text=message.text; let state=await getConversationState(user.id);
+ if(message.type==='location'&&message.location){await saveUserLocation(user.id,message.location.latitude,message.location.longitude);await resetPreferenceSurvey(user.id,'location shared');await sendText(message.from,'توصلت بالموقع ديالك 📍 غادي نعتمد عليه باش نقدّم الأقرب ليك أولاً.');await askTasteStep(message.from,'food');return}
+ if(message.type==='audio'&&message.audioId){const media=await downloadMedia(message.audioId);text=await transcribeAudio(media.buffer,media.mimeType,`voice-${message.id}.ogg`)}
+ if(message.interactiveId?.startsWith('city_')){const city=cities.find(([id])=>id===message.interactiveId)?.[1];if(city==='مدينة أخرى'){await sendText(message.from,'كتب ليا اسم المدينة اللي كاين فيها دابا.');return}if(city){await saveUserCity(user.id,city);await askLocation(message.from);return}}
+ if(message.interactiveId==='location_skip'){await skipUserLocation(user.id);await resetPreferenceSurvey(user.id,'location skipped');await askTasteStep(message.from,'food');return}
+ if(message.interactiveId==='location_help'){await sendText(message.from,'باش تصيفط الموقع: اضغط 📎 أو + حدّ خانة الكتابة → Location → Send your current location.');return}
+ if(state?.location_step==='city'&&text?.trim()){await saveUserCity(user.id,text.trim());await askLocation(message.from);return}
+ if(!text?.trim()){await beginLocationOnboarding(user.id);await askCity(message.from);return}
+ state=await getConversationState(user.id);
+ if(!state?.location_step){await beginLocationOnboarding(user.id);await askCity(message.from);return}
+ if(isRecommendationFollowUp(text)&&(!state?.missing_preferences?.length||state?.current_step==='complete')){await sendBestRecommendationFollowUp(message.from,user.id,text);return}
+ if(isGenericRestaurantIntent(text)&&(!state?.missing_preferences?.length||state?.current_step==='complete')){await resetPreferenceSurvey(user.id,text);await askTasteStep(message.from,'food');return}
+ const currentStep=state?.current_step&&state.current_step!=='complete'?state.current_step:state?.missing_preferences?.[0]||null;let patch=await parseTasteMessage(text,{currentStep});patch=applyDeterministicStepReply(patch,text,currentStep);const result=await applyTasteUpdate(user.id,patch,text);if(patch.allergies?.length)await sendText(message.from,allergySafetyMessage);if(!result.missing_preferences.length){await sendRecommendationsOrCompletion(message.from,user.id);return}await askTasteStep(message.from,result.missing_preferences[0]);
 }
-
-function isGenericRestaurantIntent(text = '') { return genericRestaurantIntents.has(normalizeText(text)); }
-function includesPhrase(text, phrase) { return text === phrase || text.includes(phrase); }
-
-function isRecommendationFollowUp(text = '') {
-  const normalized = normalizeText(text);
-  return bestFollowUpPatterns.some((p) => includesPhrase(normalized, normalizeText(p)))
-    || mapFollowUpPatterns.some((p) => includesPhrase(normalized, normalizeText(p)));
-}
-
-function googleMapsSearchUrl(name, city) {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([name, city].filter(Boolean).join(' '))}`;
-}
-
-function instagramSearchUrl(name, city) {
-  return `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent([name, city].filter(Boolean).join(' '))}`;
-}
-
-function googleImageSearchUrl(dishName) {
-  return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${dishName} food dish`)}`;
-}
-
-function restaurantLinks(restaurant) {
-  const city = restaurant.city || 'Casablanca';
-  return {
-    map: restaurant.map_url || googleMapsSearchUrl(restaurant.name, city),
-    instagram: instagramSearchUrl(restaurant.name, city)
-  };
-}
-
-function applyDeterministicStepReply(patch, text, currentStep) {
-  const normalized = normalizeText(text);
-  if (!normalized || !currentStep) return patch;
-  const out = {
-    ...patch,
-    favorite_foods: [...(patch.favorite_foods || [])],
-    favorite_flavors: [...(patch.favorite_flavors || [])],
-    preferred_atmosphere: [...(patch.preferred_atmosphere || [])]
-  };
-  if (noPreferencePatterns.some((p) => includesPhrase(normalized, normalizeText(p)))) {
-    if (currentStep === 'food') out.food_answered = true;
-    if (currentStep === 'flavor') out.flavor_answered = true;
-    if (currentStep === 'dislikes') out.dislikes_answered = true;
-    if (currentStep === 'allergies') out.allergies_answered = true;
-    if (currentStep === 'budget') out.budget_answered = true;
-    if (currentStep === 'atmosphere') out.atmosphere_answered = true;
-    return out;
-  }
-  const mappings = stepValueMaps[currentStep] || [];
-  for (const [phrases, value] of mappings) {
-    if (!phrases.some((p) => includesPhrase(normalized, normalizeText(p)))) continue;
-    if (currentStep === 'food') { out.favorite_foods = [...new Set([...out.favorite_foods, value])]; out.food_answered = true; }
-    if (currentStep === 'flavor') { out.favorite_flavors = [...new Set([...out.favorite_flavors, value])]; out.flavor_answered = true; }
-    if (currentStep === 'atmosphere') { out.preferred_atmosphere = [...new Set([...out.preferred_atmosphere, value])]; out.atmosphere_answered = true; }
-    break;
-  }
-  return out;
-}
-
-export async function handleIncomingMessage(message) {
-  const user = await getOrCreateUser(message.from, message.name);
-  let text = message.text;
-  if (message.type === 'audio' && message.audioId) {
-    const media = await downloadMedia(message.audioId);
-    text = await transcribeAudio(media.buffer, media.mimeType, `voice-${message.id}.ogg`);
-  }
-  if (!text?.trim()) {
-    await sendText(message.from, 'نقدر نفهم الرسائل المكتوبة والصوتية دابا. صيفط ليا شنو بغيتي تاكل ولا شنو كيعجبك فالأكل.');
-    return;
-  }
-  let state = await getConversationState(user.id);
-  if (isRecommendationFollowUp(text) && (!state?.missing_preferences?.length || state?.current_step === 'complete')) {
-    await sendBestRecommendationFollowUp(message.from, user.id, text);
-    return;
-  }
-  if (isGenericRestaurantIntent(text) && (!state?.missing_preferences?.length || state?.current_step === 'complete')) {
-    await resetPreferenceSurvey(user.id, text);
-    const block = onboarding.welcome;
-    const options = block.options?.length ? `\n\n${block.options.map((item) => `• ${item}`).join('\n')}` : '';
-    await sendText(message.from, `${block.text}${options}`);
-    return;
-  }
-  const currentStep = state?.current_step && state.current_step !== 'complete' ? state.current_step : state?.missing_preferences?.[0] || null;
-  let patch = await parseTasteMessage(text, { currentStep });
-  patch = applyDeterministicStepReply(patch, text, currentStep);
-  const result = await applyTasteUpdate(user.id, patch, text);
-  if (patch.allergies.length) await sendText(message.from, allergySafetyMessage);
-  if (!result.missing_preferences.length) {
-    await sendRecommendationsOrCompletion(message.from, user.id);
-    return;
-  }
-  const next = result.missing_preferences[0];
-  const block = onboarding[stepMap[next]];
-  if (!block) return;
-  const options = block.options?.length ? `\n\n${block.options.map((item) => `• ${item}`).join('\n')}` : '';
-  await sendText(message.from, `${block.text}${options}`);
-}
-
-function restaurantFromRow(row) {
-  return {
-    active: row.active,
-    cuisine_types: row.cuisine_types || [],
-    atmosphere_tags: row.atmosphere_tags || [],
-    service_modes: row.service_modes || [],
-    service_tags: row.service_tags || [],
-    rating: row.rating,
-    review_count: row.review_count,
-    map_url: row.map_url,
-    city: row.restaurant_city || 'Casablanca',
-    name: row.restaurant_name
-  };
-}
-
-async function rankedRecommendations(userId) {
-  const profile = await getTasteProfile(userId);
-  const rows = await listCandidateDishes();
-  return rankDishes(rows.map((row) => ({ dish: row, restaurant: restaurantFromRow(row) })), { profile, distanceKm: null, feedbackSignal: 0 });
-}
-
-async function sendBestRecommendationFollowUp(to, userId, text) {
-  const ranked = await rankedRecommendations(userId);
-  if (!ranked.length) {
-    await sendText(to, 'ما لقيتش دابا اقتراح موثّق نقدر نختارو ليك بثقة.');
-    return;
-  }
-  const { dish, restaurant, match } = ranked[0];
-  const wantsMap = mapFollowUpPatterns.some((p) => includesPhrase(normalizeText(text), normalizeText(p)));
-  const price = dish.price != null ? `${Number(dish.price).toFixed(0)} درهم` : 'الثمن غير متأكد';
-  const links = restaurantLinks(restaurant);
-  const lines = [
-    `أنا نختار ليك هادا: ${dish.name} من ${restaurant.name}.`, `${match.score}% مناسب لذوقك`, `💰 ${price}`,
-    restaurant.rating != null ? `⭐ ${restaurant.rating}` : null,
-    wantsMap ? `📍 Google Maps: ${links.map}` : null,
-    `📸 Instagram: ${links.instagram}`
-  ].filter(Boolean);
-  await sendText(to, lines.join('\n'));
-}
-
-async function sendRecommendationsOrCompletion(to, userId) {
-  const profile = await getTasteProfile(userId);
-  const rows = await listCandidateDishes();
-  if (!rows.length) {
-    await sendText(to, `${completionMessage}\n\nالبروفايل ديالك واجد. ملي ندخلو بيانات المطاعم والأطباق، غادي نوريك أحسن 3 اقتراحات بالثمن والصورة.`);
-    return;
-  }
-  const ranked = rankDishes(rows.map((row) => ({ dish: row, restaurant: restaurantFromRow(row) })), { profile, distanceKm: null, feedbackSignal: 0 });
-  if (!ranked.length) {
-    await sendText(to, 'لقيت المعلومات ديالك ولكن ما لقيتش دابا طبق كيدوز شروطك، خصوصاً الحساسية والتفضيلات. غادي نفضّل ما نخمنش عليك.');
-    return;
-  }
-  await sendText(to, 'ها أحسن الاقتراحات اللي لقيت ليك دابا على حساب الأجوبة ديالك:');
-  for (const item of ranked) {
-    const { dish, restaurant, match } = item;
-    const price = dish.price != null ? `${Number(dish.price).toFixed(0)} درهم` : 'الثمن غير متأكد';
-    const rating = restaurant.rating != null ? `⭐ ${restaurant.rating}` : null;
-    const links = restaurantLinks(restaurant);
-    const baseCaption = [
-      `${match.score}% مناسب لذوقك`, `🍽️ ${dish.name}`, `📍 ${restaurant.name}`, `💰 ${price}`, rating,
-      dish.description ? `📝 ${dish.description}` : null,
-      dish.data_confidence !== 'verified' ? 'ℹ️ بعض معلومات هاد الطبق خاصها تأكيد إضافي.' : null,
-      `🗺️ Google Maps: ${links.map}`, `📸 Instagram: ${links.instagram}`
-    ].filter(Boolean).join('\n');
-
-    if (dish.photo_url && dish.image_confidence === 'verified') {
-      await sendImage(to, dish.photo_url, `${baseCaption}\n✅ صورة موثقة لنفس الطبق.`);
-    } else if (dish.photo_url) {
-      await sendImage(to, dish.photo_url, `${baseCaption}\n⚠️ صورة تقريبية لنفس نوع الطبق، ماشي بالضرورة من نفس المطعم.`);
-    } else {
-      await sendText(to, `${baseCaption}\n📷 ما عنديش صورة جاهزة دابا. صور تقريبية لنفس الطبق: ${googleImageSearchUrl(dish.name)}`);
-    }
-  }
-}
+function restaurantFromRow(row){return{active:row.active,cuisine_types:row.cuisine_types||[],atmosphere_tags:row.atmosphere_tags||[],service_modes:row.service_modes||[],service_tags:row.service_tags||[],rating:row.rating,review_count:row.review_count,map_url:row.map_url,city:row.restaurant_city||'Casablanca',name:row.restaurant_name,distance_km:row.distance_km}}
+async function rankedRecommendations(userId){const profile=await getTasteProfile(userId);const rows=await listCandidateDishes(userId);const ranked=rankDishes(rows.map(row=>({dish:row,restaurant:restaurantFromRow(row)})),{profile,distanceKm:null,feedbackSignal:0});return ranked.sort((a,b)=>{const ad=a.dish.distance_km??9999,bd=b.dish.distance_km??9999;return (b.match.score-a.match.score)||ad-bd})}
+async function sendBestRecommendationFollowUp(to,userId,text){const ranked=await rankedRecommendations(userId);if(!ranked.length){await sendText(to,'ما لقيتش دابا اقتراح مناسب فهاد المنطقة.');return}const{dish,restaurant,match}=ranked[0],links=restaurantLinks(restaurant);await sendText(to,[`🏆 نختار ليك: ${dish.name} — ${restaurant.name}`,`التنقيط: ${match.score}/100`,dish.distance_km!=null?`📍 ${dish.distance_km} km منك`:null,dish.price!=null?`💰 ${Number(dish.price).toFixed(0)} درهم`:null,`🗺️ ${links.map}`,`📸 ${links.instagram}`].filter(Boolean).join('\n'))}
+async function sendRecommendationsOrCompletion(to,userId){const ranked=await rankedRecommendations(userId);if(!ranked.length){await sendText(to,`${completionMessage}\nما لقيتش دابا مطاعم مناسبة فهاد المنطقة.`);return}await sendText(to,'رتبت ليك أحسن النتائج حسب الذوق، التنقيط والقرب:');let rank=0;for(const item of ranked.slice(0,3)){rank++;const{dish,restaurant,match}=item,links=restaurantLinks(restaurant);const caption=[`${rank}️⃣ ${match.score}/100`,`🍽️ ${dish.name}`,`🏠 ${restaurant.name}`,dish.distance_km!=null?`📍 ${dish.distance_km} km منك`:null,restaurant.rating!=null?`⭐ ${restaurant.rating}`:null,dish.price!=null?`💰 ${Number(dish.price).toFixed(0)} درهم`:null,`🗺️ Google Maps: ${links.map}`,`📸 Instagram: ${links.instagram}`].filter(Boolean).join('\n');if(dish.photo_url)await sendImage(to,dish.photo_url,`${caption}\n${dish.image_confidence==='verified'?'✅ صورة موثقة لنفس الطبق.':'⚠️ صورة تقريبية، ماشي بالضرورة من نفس المطعم.'}`);else await sendText(to,`${caption}\n📷 صور تقريبية: ${googleImageSearchUrl(dish.name)}`)}}
