@@ -67,6 +67,14 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
     allergies: uniq([...(profile.allergies || []), ...(patch.allergies || [])]),
     dietary_restrictions: uniq([...(profile.dietary_restrictions || []), ...(patch.dietary_restrictions || [])]),
     preferred_atmosphere: uniq([...(profile.preferred_atmosphere || []), ...(patch.preferred_atmosphere || [])]),
+    preferred_cuisines: uniq([...(profile.preferred_cuisines || []), ...(patch.preferred_cuisines || [])]),
+    preferred_textures: uniq([...(profile.preferred_textures || []), ...(patch.preferred_textures || [])]),
+    preferred_occasions: uniq([...(profile.preferred_occasions || []), ...(patch.preferred_occasions || [])]),
+    preferred_service_modes: uniq([...(profile.preferred_service_modes || []), ...(patch.preferred_service_modes || [])]),
+    service_priorities: uniq([...(profile.service_priorities || []), ...(patch.service_priorities || [])]),
+    portion_preferences: uniq([...(profile.portion_preferences || []), ...(patch.portion_preferences || [])]),
+    spicy_preference: patch.spicy_preference ?? profile.spicy_preference,
+    health_priority: patch.health_priority ?? profile.health_priority,
     budget_min: patch.budget_min ?? profile.budget_min,
     budget_max: patch.budget_max ?? profile.budget_max,
     max_distance_km: patch.max_distance_km ?? profile.max_distance_km,
@@ -78,7 +86,9 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
       favorite_foods=$2, favorite_flavors=$3, disliked_foods=$4, allergies=$5,
       dietary_restrictions=$6, budget_min=$7, budget_max=$8,
       preferred_atmosphere=$9, max_distance_km=$10, confidence_score=$11,
-      updated_at=NOW()
+      preferred_cuisines=$12, preferred_textures=$13, preferred_occasions=$14,
+      preferred_service_modes=$15, service_priorities=$16, portion_preferences=$17,
+      spicy_preference=$18, health_priority=$19, updated_at=NOW()
      WHERE user_id=$1`,
     [
       userId,
@@ -91,7 +101,15 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
       merged.budget_max,
       merged.preferred_atmosphere,
       merged.max_distance_km,
-      merged.confidence_score
+      merged.confidence_score,
+      merged.preferred_cuisines,
+      merged.preferred_textures,
+      merged.preferred_occasions,
+      merged.preferred_service_modes,
+      merged.service_priorities,
+      merged.portion_preferences,
+      merged.spicy_preference,
+      merged.health_priority
     ]
   );
 
@@ -117,7 +135,9 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
 export async function listCandidateDishes() {
   const { rows } = await requirePool().query(
     `SELECT d.*, r.name AS restaurant_name, r.latitude, r.longitude,
-            r.cuisine_types, r.atmosphere_tags, r.rating, r.map_url, r.active
+            r.cuisine_types, r.atmosphere_tags, r.rating, r.review_count,
+            r.map_url, r.active, r.service_modes, r.service_tags, r.price_level,
+            r.cover_photo_url
      FROM dishes d
      JOIN restaurants r ON r.id = d.restaurant_id
      WHERE d.available = TRUE AND r.active = TRUE`
