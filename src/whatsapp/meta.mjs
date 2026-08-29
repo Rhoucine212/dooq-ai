@@ -33,7 +33,7 @@ export function extractIncomingMessages(payload) {
   return out;
 }
 
-export async function sendText(to, body) {
+async function sendPayload(payload) {
   const { token, phoneNumberId } = requireMeta();
   const response = await fetch(`${GRAPH_BASE}/${phoneNumberId}/messages`, {
     method: 'POST',
@@ -41,16 +41,37 @@ export async function sendText(to, body) {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'text',
-      text: { preview_url: false, body }
-    })
+    body: JSON.stringify(payload)
   });
-  if (!response.ok) throw new Error(`WhatsApp send failed: ${response.status}`);
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(`WhatsApp send failed: ${response.status}${details ? ` ${details.slice(0, 300)}` : ''}`);
+  }
   return response.json();
+}
+
+export async function sendText(to, body) {
+  return sendPayload({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'text',
+    text: { preview_url: false, body }
+  });
+}
+
+export async function sendImage(to, imageUrl, caption = '') {
+  if (!/^https:\/\//i.test(String(imageUrl || ''))) throw new Error('WhatsApp image requires a public HTTPS URL');
+  return sendPayload({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'image',
+    image: {
+      link: imageUrl,
+      ...(caption ? { caption: String(caption).slice(0, 1024) } : {})
+    }
+  });
 }
 
 export async function downloadMedia(mediaId) {
