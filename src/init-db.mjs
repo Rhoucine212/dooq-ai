@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import pg from 'pg';
 import { seedCasablancaRestaurants } from './data/casablanca-seed.mjs';
 import { seedCasablancaExtra } from './data/casablanca-extra-seed.mjs';
+import { seedExpandedCasablancaRestaurants } from './data/casablanca-seed-expanded.mjs';
 
 export async function ensureDatabaseSchema() {
   if (!process.env.DATABASE_URL) {
@@ -21,11 +22,14 @@ export async function ensureDatabaseSchema() {
     await client.query(sql);
     const primary = await seedCasablancaRestaurants(client);
     const extra = await seedCasablancaExtra(client);
+    const expanded = await seedExpandedCasablancaRestaurants(client);
     const seed = {
-      restaurantCount: primary.restaurantCount + extra.restaurantCount,
-      dishCount: primary.dishCount + extra.dishCount,
+      restaurantCount: primary.restaurantCount + extra.restaurantCount + expanded.restaurantCount,
+      dishCount: primary.dishCount + extra.dishCount + expanded.dishCount,
       verifiedRestaurantBatch: primary.restaurantCount,
-      expandedRestaurantBatch: extra.restaurantCount
+      expandedRestaurantBatch: extra.restaurantCount,
+      researchedMenuBatch: expanded.restaurantCount,
+      researchedMenuDishCount: expanded.dishCount
     };
     console.log('Dooq AI database schema ready', seed);
     return { configured: true, initialized: true, seed };
