@@ -31,6 +31,20 @@ function normalizeUrl(value) {
   }
 }
 
+function googleMapsSearchUrl(name, city) {
+  const q = encodeURIComponent([name, city].filter(Boolean).join(' '));
+  return `https://www.google.com/maps/search/?api=1&query=${q}`;
+}
+
+function instagramSearchUrl(name, city) {
+  const q = encodeURIComponent([name, city].filter(Boolean).join(' '));
+  return `https://www.instagram.com/explore/search/keyword/?q=${q}`;
+}
+
+function googleImageSearchUrl(query) {
+  return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`;
+}
+
 function confidenceForSource(source = {}) {
   const type = String(source.type || '').toLowerCase();
   if (['official_website', 'official_instagram', 'official_facebook', 'restaurant_menu'].includes(type)) return 'verified';
@@ -56,6 +70,8 @@ export async function importRestaurantRecord(input = {}) {
   const coverPhotoUrl = normalizeUrl(input.cover_photo_url);
   const coverPhotoSourceUrl = normalizeUrl(input.cover_photo_source_url);
   const coverPhotoConfidence = input.cover_photo_confidence || (coverPhotoUrl && coverPhotoSourceUrl ? 'verified' : coverPhotoUrl ? 'partial' : 'unknown');
+  const mapUrl = normalizeUrl(input.map_url) || googleMapsSearchUrl(name, city);
+  const instagramUrl = normalizeUrl(input.instagram_url) || instagramSearchUrl(name, city);
 
   const sourceKey = String(input.source_key || `import:${city.toLowerCase()}:${name.toLowerCase()}`).replace(/\s+/g, '-');
 
@@ -97,7 +113,7 @@ export async function importRestaurantRecord(input = {}) {
       input.longitude ?? null,
       uniq(input.cuisine_types || []),
       input.phone || null,
-      normalizeUrl(input.map_url),
+      mapUrl,
       input.rating ?? null,
       input.review_count ?? null,
       uniq(input.atmosphere_tags || []),
@@ -118,9 +134,11 @@ export async function importRestaurantRecord(input = {}) {
   for (const raw of Array.isArray(input.dishes) ? input.dishes : []) {
     const dishName = String(raw.name || '').trim();
     if (!dishName) continue;
-    const photoUrl = normalizeUrl(raw.photo_url);
-    const photoSourceUrl = normalizeUrl(raw.photo_source_url);
-    const imageConfidence = raw.image_confidence || (photoUrl && photoSourceUrl ? 'verified' : photoUrl ? 'partial' : 'unknown');
+    const approximatePhotoUrl = normalizeUrl(raw.approximate_photo_url);
+    const photoUrl = normalizeUrl(raw.photo_url) || approximatePhotoUrl;
+    const photoSourceUrl = normalizeUrl(raw.photo_source_url) || normalizeUrl(raw.approximate_photo_source_url);
+    const explicitConfidence = String(raw.image_confidence || '').toLowerCase();
+    const imageConfidence = explicitConfidence || (approximatePhotoUrl ? 'partial' : (photoUrl && photoSourceUrl ? 'verified' : photoUrl ? 'partial' : 'unknown'));
     const dishSources = Array.isArray(raw.sources) ? raw.sources : [];
     const dishConfidence = bestConfidence(dishSources.map(confidenceForSource));
     const dishSourceKey = String(raw.source_key || `${sourceKey}:dish:${dishName.toLowerCase()}`).replace(/\s+/g, '-');
@@ -170,12 +188,15 @@ export async function importRestaurantRecord(input = {}) {
         raw.portion_size || null,
         raw.calories ?? null,
         raw.protein_grams ?? null,
-        imageConfidence,
+        ['verified', 'partial', 'unknown'].includes(imageConfidence) ? imageConfidence : 'partial',
         normalizeUrl(raw.source_url) || photoSourceUrl || (dishSources.map((s) => normalizeUrl(s.url)).find(Boolean) || null),
         dishSourceKey
       ]
     );
-    dishes.push(result.rows[0]);
+    dishes.push({
+      ...result.rows[0],
+      approximate_image_search_url: googleImageSearchUrl(`${dishName} food dish`)
+    });
   }
 
   return {
@@ -183,6 +204,11 @@ export async function importRestaurantRecord(input = {}) {
     dishes,
     sources: sourceUrls,
     cover_photo_confidence: coverPhotoConfidence,
-    restaurant_data_confidence: sourceConfidence
+    restaurant_data_confidence: sourceConfidence,
+    discovery: {
+      google_maps: mapUrl,
+      instagram: instagramUrl,
+      google_search: `https://www.google.com/search?q=${encodeURIComponent(`${name} ${city}`)}`
+    }
   };
 }
