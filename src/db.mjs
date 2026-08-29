@@ -155,7 +155,7 @@ export async function applyTasteUpdate(userId, patch, rawMessage = null) {
 
 export async function listCandidateDishes() {
   const { rows } = await requirePool().query(
-    `SELECT d.*, r.name AS restaurant_name, r.latitude, r.longitude,
+    `SELECT d.*, r.name AS restaurant_name, r.city AS restaurant_city, r.latitude, r.longitude,
             r.cuisine_types, r.atmosphere_tags, r.rating, r.review_count,
             r.map_url, r.active, r.service_modes, r.service_tags, r.price_level,
             r.cover_photo_url
