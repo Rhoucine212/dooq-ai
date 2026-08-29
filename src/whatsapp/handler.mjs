@@ -1,5 +1,5 @@
 import { parseTasteMessage, transcribeAudio } from '../ai/parser.mjs';
-import { applyTasteUpdate, getConversationState, getOrCreateUser, getTasteProfile, listCandidateDishes } from '../db.mjs';
+import { applyTasteUpdate, getConversationState, getOrCreateUser, getTasteProfile, listCandidateDishes, resetPreferenceSurvey } from '../db.mjs';
 import { rankDishes } from '../matching/engine.mjs';
 import { onboarding, completionMessage, allergySafetyMessage } from '../onboarding/darija.mjs';
 import { downloadMedia, sendImage, sendText } from './meta.mjs';
@@ -46,6 +46,11 @@ const stepValueMaps = {
   ]
 };
 
+const genericRestaurantIntents = new Set([
+  'مطعم', 'مطاعم', 'restaurant', 'restaurants', 'resto',
+  'بغيت ناكل', 'اريد ان اكل', 'أريد أن آكل', 'شنو ناكل', 'فين ناكل', 'فين نمشي ناكل'
+]);
+
 function normalizeText(text = '') {
   return String(text)
     .trim()
@@ -54,6 +59,10 @@ function normalizeText(text = '') {
     .replace(/[؟?!.,،؛:]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isGenericRestaurantIntent(text = '') {
+  return genericRestaurantIntents.has(normalizeText(text));
 }
 
 function includesPhrase(text, phrase) {
@@ -117,7 +126,18 @@ export async function handleIncomingMessage(message) {
     return;
   }
 
-  const state = await getConversationState(user.id);
+  let state = await getConversationState(user.id);
+
+  if (isGenericRestaurantIntent(text) && (!state?.missing_preferences?.length || state?.current_step === 'complete')) {
+    await resetPreferenceSurvey(user.id, text);
+    const block = onboarding.welcome;
+    const options = block.options?.length
+      ? `\n\n${block.options.map((item) => `• ${item}`).join('\n')}`
+      : '';
+    await sendText(message.from, `${block.text}${options}`);
+    return;
+  }
+
   const currentStep = state?.current_step && state.current_step !== 'complete'
     ? state.current_step
     : state?.missing_preferences?.[0] || null;
@@ -175,7 +195,7 @@ async function sendRecommendationsOrCompletion(to, userId) {
     return;
   }
 
-  await sendText(to, 'ها أحسن الاقتراحات اللي لقيت ليك دابا. كنوري غير الصور المرتبطة فعلاً بنفس الطبق والمطعم:');
+  await sendText(to, 'ها أحسن الاقتراحات اللي لقيت ليك دابا على حساب الأجوبة ديالك. كنوري غير الصور المرتبطة فعلاً بنفس الطبق والمطعم:');
 
   for (const item of ranked) {
     const { dish, restaurant, match } = item;
