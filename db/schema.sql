@@ -56,6 +56,10 @@ ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS service_modes TEXT[] NOT NULL D
 ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS service_tags TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS price_level SMALLINT CHECK (price_level BETWEEN 1 AND 4);
 ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS review_count INTEGER;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS source_key TEXT;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS data_confidence TEXT NOT NULL DEFAULT 'partial' CHECK (data_confidence IN ('verified','partial','unknown'));
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT 'Casablanca';
 
 CREATE TABLE IF NOT EXISTS dishes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -83,6 +87,7 @@ ALTER TABLE dishes ADD COLUMN IF NOT EXISTS calories INTEGER;
 ALTER TABLE dishes ADD COLUMN IF NOT EXISTS protein_grams NUMERIC(8,2);
 ALTER TABLE dishes ADD COLUMN IF NOT EXISTS image_confidence TEXT NOT NULL DEFAULT 'unknown' CHECK (image_confidence IN ('verified','partial','unknown'));
 ALTER TABLE dishes ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE dishes ADD COLUMN IF NOT EXISTS source_key TEXT;
 
 CREATE TABLE IF NOT EXISTS recommendations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,6 +115,8 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurants_source_key ON restaurants(source_key) WHERE source_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dishes_source_key ON dishes(source_key) WHERE source_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_dishes_restaurant ON dishes(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_recommendations_user ON recommendations(user_id);
