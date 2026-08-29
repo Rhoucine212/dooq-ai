@@ -4,6 +4,7 @@ import { onboarding, nextMissingPreference } from './onboarding/darija.mjs';
 import { extractIncomingMessages } from './whatsapp/meta.mjs';
 import { handleIncomingMessage } from './whatsapp/handler.mjs';
 import { ensureDatabaseSchema } from './init-db.mjs';
+import { importRestaurantRecord } from './importer/restaurant-importer.mjs';
 
 let databaseReady = false;
 let databaseConfigured = Boolean(process.env.DATABASE_URL);
@@ -25,7 +26,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'dooq-ai',
-    version: '0.2.3',
+    version: '0.2.4',
     darijaOnboarding: true,
     matchingEngine: true,
     whatsappWebhook: true,
@@ -35,6 +36,7 @@ app.get('/health', (_req, res) => {
     databaseConfigured,
     databaseReady,
     automaticDatabaseInit: true,
+    restaurantImporter: true,
     casablancaRestaurantSeed: casablancaSeed
   });
 });
@@ -63,6 +65,29 @@ app.post('/webhook', (req, res) => {
         error: error?.message || String(error)
       });
     });
+  }
+});
+
+app.post('/api/import/restaurant', async (req, res) => {
+  try {
+    const imported = await importRestaurantRecord(req.body || {});
+    return res.status(201).json({
+      ok: true,
+      restaurant: {
+        id: imported.restaurant.id,
+        name: imported.restaurant.name,
+        city: imported.restaurant.city,
+        map_url: imported.restaurant.map_url,
+        cover_photo_url: imported.restaurant.cover_photo_url,
+        data_confidence: imported.restaurant.data_confidence
+      },
+      dishes_imported: imported.dishes.length,
+      sources: imported.sources,
+      cover_photo_confidence: imported.cover_photo_confidence
+    });
+  } catch (error) {
+    console.error('Restaurant import failed', error?.message || String(error));
+    return res.status(400).json({ ok: false, error: error?.message || String(error) });
   }
 });
 
